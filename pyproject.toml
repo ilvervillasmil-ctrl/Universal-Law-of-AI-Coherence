@@ -1,0 +1,21 @@
+[project]
+name = "universal-integration-system"
+version = "3.0.0"
+description = "Villasmil-Omega Universal Coherence Framework"
+requires-python = ">=3.10"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["formulas*", "core*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+  "fast: quick deterministic tests safe for CI",
+  "slow: optional heavier tests (deselect with '-m \"not slow\"')",
+]
+addopts = "-v --tb=short"
