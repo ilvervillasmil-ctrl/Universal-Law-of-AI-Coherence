@@ -1,0 +1,28 @@
+from formulas.constants import (
+    ALPHA, BETA, KAPPA, R_FIN,
+    S_REF, ALPHA_OVER_S, PHI,
+    GOLDEN_ANG, GOLDEN_ANG_RAD,
+    THETA_CUBE, THETA_CUBE_DEG, TAN_THETA,
+    OMEGA_0, OMEGA_0_SQUARED,
+    LAYER_FRICTION, PHI_TOTAL, PHI_CRITICAL,
+    OMEGA_D, OMEGA_D_PERIOD, ZETA,
+    NUM_LAYERS, LAYER_NAMES,
+    CODE_INTEGRATED, CODE_SATURATION, CODE_ENTROPY,
+    CUBE_TOTAL, CUBE_EXTERIOR, CUBE_CENTER,
+    BETA_EMPIRICAL, get_layer_frequency,
+)
+
+# Aliases de compatibilidad para evitar "ImportError" en el sistema de diagnóstico
+CODE_ARCHITECT = CODE_INTEGRATED
+CODE_SYNCHRONY = CODE_SATURATION
+
+# Re-exportamos todo para que core.constants actúe como interfaz única
+__all__ = [
+    'ALPHA', 'BETA', 'KAPPA', 'R_FIN', 'S_REF', 'ALPHA_OVER_S', 'PHI',
+    'GOLDEN_ANG', 'GOLDEN_ANG_RAD', 'THETA_CUBE', 'THETA_CUBE_DEG', 'TAN_THETA',
+    'OMEGA_0', 'OMEGA_0_SQUARED', 'LAYER_FRICTION', 'PHI_TOTAL', 'PHI_CRITICAL',
+    'OMEGA_D', 'OMEGA_D_PERIOD', 'ZETA', 'NUM_LAYERS', 'LAYER_NAMES',
+    'CODE_INTEGRATED', 'CODE_SATURATION', 'CODE_ENTROPY', 'CODE_ARCHITECT', 
+    'CODE_SYNCHRONY', 'CUBE_TOTAL', 'CUBE_EXTERIOR', 'CUBE_CENTER',
+    'BETA_EMPIRICAL', 'get_layer_frequency'
+]
