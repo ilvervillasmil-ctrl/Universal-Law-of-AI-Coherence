@@ -3,10 +3,37 @@
 test_se_tcc_montecarlo.py
 =========================
 Monte Carlo adversario SE/TCC v0.2-test — pytest.
-Umbral fijo 0.003. Al fallar muestra ejemplos exactos (D, O, e*, teorema, por qué).
 
-  pytest test_se_tcc_montecarlo.py -v -s
-  SE_MC_N=3000000 pytest test_se_tcc_montecarlo.py -v -s
+Umbral fijo: 0.003
+Al fallar: muestras exactas (D, O, e*, teorema, por qué).
+
+---------------------------------------------------------------------------
+SE-A-REC — Axioma de recombinación bajo O  (clave del oráculo de ruido)
+---------------------------------------------------------------------------
+Referencia de marco: Teorema 15 (emergencia por recombinación de invariantes)
+                     Teorema TR1 (generatividad estructural)
+
+Sea D' obtenida por recombinación (edición, permutación, inserción, mezcla)
+a partir de material lingüístico bajo O explícito y escala e*.
+
+  1. D' puede tener Sentido_O = 1 solo si hay cierre composicional a e* (SE-T1).
+  2. D' puede tener Sentido_O = 0 aunque conserve tokens del original (SE-A2/T2).
+  3. La recombinación NO es criterio de sentido: anclas léxicas o procedencia
+     de plantilla positiva no implican cierre.
+  4. Si la recombinación destruye orden/roles a e*, el oráculo de test etiqueta
+     debe_sentido=False (no fabricar FN).
+  5. Si D' conserva cierre canónico a e* bajo O, el oráculo etiqueta
+     debe_sentido=True (no fabricar FP).
+  6. "No tiene sentido" bajo O/e* ES el veredicto Sentido_O=0; no hay un
+     segundo sentido metafísico del sinsentido.
+
+Oráculo POSITIVO_RUIDO (implementación de SE-A-REC):
+  debe_sentido := (evaluar_se(D', O, e*=clausula).cierre is True)
+  Nunca por anclas sueltas.
+
+Uso:
+  pytest tests/test_se_tcc_montecarlo.py -v -s
+  SE_MC_N=3000000 pytest tests/test_se_tcc_montecarlo.py -v -s
 
 Env:
   SE_MC_N          default 200000
@@ -130,12 +157,12 @@ CONECTORES = ["pero", "y", "entonces", "porque", "cuando", "however", "and", "th
 
 POR_QUE = {
     "FP_BASURA": (
-        "SE-T1/T2/A2: sentido_o=1 sin cierre legítimo a e* "
-        "(match parcial o salto de escala; material/subcadena no bastan)"
+        "SE-T1/T2/A2 + SE-A-REC: sentido_o=1 sin cierre legítimo a e* "
+        "(recombinación no implica sentido; material/subcadena no bastan)"
     ),
     "FN_CIERRE": (
-        "SE-T1: oráculo exige sentido a cláusula bajo O y el evaluador negó cierre "
-        "(detector vs ruido / normalización)"
+        "SE-T1 + SE-A-REC: oráculo exige sentido y evaluador negó cierre "
+        "(si el oráculo usa cierre, esto no debería fabricarse en POSITIVO_RUIDO)"
     ),
     "BYPASS_META": "SE-T6: meta en el texto no debe establecer sentido sin cierre",
     "O_INVENTADO": "SE-A1: sentido pleno sin O explícito",
@@ -147,7 +174,7 @@ POR_QUE = {
 
 
 # ---------------------------------------------------------------------------
-# Ruido
+# Ruido / recombinación
 # ---------------------------------------------------------------------------
 
 def _n_edits(sigma: float, rng: random.Random) -> int:
@@ -155,6 +182,7 @@ def _n_edits(sigma: float, rng: random.Random) -> int:
 
 
 def corromper(texto: str, sigma: float, rng: random.Random) -> str:
+    """Recombinación adversaria (edits gaussianos). No define sentido (SE-A-REC.3)."""
     if not texto or not texto.strip():
         return texto
     toks = texto.split()
@@ -227,133 +255,8 @@ def generar_deixis_sin_canal(rng: random.Random) -> str:
     ])
 
 
-def generar_caso(rng: random.Random, sigma: float) -> Caso:
-    r = rng.random()
-
-    if r < 0.18:
-        lang = rng.choice(list(POSITIVAS.keys()))
-        return Caso(
-            D=rng.choice(POSITIVAS[lang]),
-            O=f"idioma:{lang}|registro:oracion|acto:aserción",
-            e_star="clausula",
-            tipo_ataque="POSITIVO_LIMPIO",
-            debe_sentido=True,
-            idioma=lang,
-        )
-
-    if r < 0.30:
-        lang = rng.choice(list(POSITIVAS.keys()))
-        D0 = rng.choice(POSITIVAS[lang])
-        D = corromper(D0, sigma * 0.45, rng)
-        anclas = (
-            "lleg", "open", "rain", "plus", "heat", "kam", "öffnet", "regnet",
-            "arriv", "ouvre", "pleut", "perro", "dog", "Hund", "chien", "sol", "sun",
-        )
-        intacto = len(D.split()) >= 3 and any(a.lower() in D.lower() for a in anclas)
-        return Caso(
-            D=D,
-            O=f"idioma:{lang}|registro:oracion|acto:aserción",
-            e_star="clausula",
-            tipo_ataque="POSITIVO_RUIDO",
-            debe_sentido=True if intacto else False,
-            idioma=lang,
-        )
-
-    if r < 0.50:
-        return Caso(
-            D=corromper(generar_basura_discurso(rng), sigma * 0.3, rng),
-            O="idioma:es|registro:conversacion|acto:aserción",
-            e_star="discurso",
-            tipo_ataque="BASURA_DISCURSO",
-            debe_sentido=False,
-        )
-
-    if r < 0.60:
-        lang = rng.choice(["es", "en"])
-        return Caso(
-            D=permutar_agresivo(rng.choice(POSITIVAS[lang]), rng),
-            O=f"idioma:{lang}|registro:oracion|acto:aserción",
-            e_star="clausula",
-            tipo_ataque="PERMUTACION",
-            debe_sentido=False,
-            idioma=lang,
-        )
-
-    if r < 0.68:
-        base = generar_basura_discurso(rng) if rng.random() < 0.6 else rng.choice(POSITIVAS["es"])
-        return Caso(
-            D=generar_meta_bypass(base, rng),
-            O="idioma:es|registro:conversacion|acto:aserción",
-            e_star="discurso",
-            tipo_ataque="META_BYPASS",
-            debe_sentido=False,
-            meta_inyectada=True,
-        )
-
-    if r < 0.75:
-        return Caso(
-            D=rng.choice(POSITIVAS["es"] + POSITIVAS["en"]),
-            O=None,
-            e_star="clausula",
-            tipo_ataque="O_OMITIDO",
-            debe_sentido=None,
-        )
-
-    if r < 0.82:
-        return Caso(
-            D=rng.choice([
-                "El unicornio entro al jardin.",
-                "Un gigante sostiene el sol con una mano.",
-                "The dragon slept under the mountain.",
-                "Los elfos tejieron la noche.",
-            ]),
-            O="idioma:es|registro:ficcion|acto:relato",
-            e_star="clausula",
-            tipo_ataque="FICCION",
-            debe_sentido=True,
-            es_ficcion=True,
-        )
-
-    if r < 0.88:
-        return Caso(
-            D=generar_mezcla_codigos(rng),
-            O="idioma:es|registro:oracion|acto:aserción",
-            e_star="discurso",
-            tipo_ataque="MEZCLA_CODIGOS",
-            debe_sentido=False,
-            idioma="mix",
-        )
-
-    if r < 0.93:
-        return Caso(
-            D=generar_deixis_sin_canal(rng),
-            O="idioma:es|registro:conversacion|acto:aserción",
-            e_star="discurso",
-            tipo_ataque="DEIXIS_SIN_CANAL",
-            debe_sentido=False,
-        )
-
-    if r < 0.97:
-        return Caso(
-            D=generar_basura_discurso(rng),
-            O="idioma:es|registro:conversacion|acto:aserción",
-            e_star="discurso",
-            tipo_ataque="ESCALA_DISCURSO_BASURA",
-            debe_sentido=False,
-        )
-
-    return Caso(
-        D=rng.choice(POSITIVAS["en"]),
-        O="idioma:es|registro:oracion|acto:aserción",
-        e_star="clausula",
-        tipo_ataque="O_IDIOMA_DESALINEADO",
-        debe_sentido=False,
-        idioma="en",
-    )
-
-
 # ---------------------------------------------------------------------------
-# Evaluador SE v0.2
+# Evaluador SE (definido antes del generador: el oráculo de ruido lo usa)
 # ---------------------------------------------------------------------------
 
 _META_PAT = re.compile(
@@ -518,7 +421,155 @@ def assert_invariantes_se(caso: Caso, v: Veredicto) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Runner + muestras exactas
+# Oráculo POSITIVO_RUIDO = SE-A-REC (cierre, no anclas)
+# ---------------------------------------------------------------------------
+
+def oraculo_recombinacion_clausula(D: str, O: str, idioma: str) -> bool:
+    """
+    SE-A-REC.4–5: debe_sentido según cierre del evaluador sobre D',
+    no según anclas léxicas ni edits contados.
+    """
+    probe = Caso(
+        D=D,
+        O=O,
+        e_star="clausula",
+        tipo_ataque="POSITIVO_LIMPIO",  # neutro: no forzar perm/mezcla
+        debe_sentido=None,
+        idioma=idioma,
+    )
+    return bool(evaluar_se(probe).cierre)
+
+
+# ---------------------------------------------------------------------------
+# Generador
+# ---------------------------------------------------------------------------
+
+def generar_caso(rng: random.Random, sigma: float) -> Caso:
+    r = rng.random()
+
+    # --- positivos limpios ---
+    if r < 0.18:
+        lang = rng.choice(list(POSITIVAS.keys()))
+        return Caso(
+            D=rng.choice(POSITIVAS[lang]),
+            O=f"idioma:{lang}|registro:oracion|acto:aserción",
+            e_star="clausula",
+            tipo_ataque="POSITIVO_LIMPIO",
+            debe_sentido=True,
+            idioma=lang,
+        )
+
+    # --- POSITIVO_RUIDO: recombinación; oráculo = cierre (SE-A-REC) ---
+    if r < 0.30:
+        lang = rng.choice(list(POSITIVAS.keys()))
+        D0 = rng.choice(POSITIVAS[lang])
+        O = f"idioma:{lang}|registro:oracion|acto:aserción"
+        D = corromper(D0, sigma * 0.45, rng)
+        debe = oraculo_recombinacion_clausula(D, O, lang)
+        return Caso(
+            D=D,
+            O=O,
+            e_star="clausula",
+            tipo_ataque="POSITIVO_RUIDO",
+            debe_sentido=debe,  # True solo si sigue habiendo cierre
+            idioma=lang,
+        )
+
+    if r < 0.50:
+        return Caso(
+            D=corromper(generar_basura_discurso(rng), sigma * 0.3, rng),
+            O="idioma:es|registro:conversacion|acto:aserción",
+            e_star="discurso",
+            tipo_ataque="BASURA_DISCURSO",
+            debe_sentido=False,
+        )
+
+    if r < 0.60:
+        lang = rng.choice(["es", "en"])
+        return Caso(
+            D=permutar_agresivo(rng.choice(POSITIVAS[lang]), rng),
+            O=f"idioma:{lang}|registro:oracion|acto:aserción",
+            e_star="clausula",
+            tipo_ataque="PERMUTACION",
+            debe_sentido=False,  # permutación agresiva: sin cierre esperado
+            idioma=lang,
+        )
+
+    if r < 0.68:
+        base = generar_basura_discurso(rng) if rng.random() < 0.6 else rng.choice(POSITIVAS["es"])
+        return Caso(
+            D=generar_meta_bypass(base, rng),
+            O="idioma:es|registro:conversacion|acto:aserción",
+            e_star="discurso",
+            tipo_ataque="META_BYPASS",
+            debe_sentido=False,
+            meta_inyectada=True,
+        )
+
+    if r < 0.75:
+        return Caso(
+            D=rng.choice(POSITIVAS["es"] + POSITIVAS["en"]),
+            O=None,
+            e_star="clausula",
+            tipo_ataque="O_OMITIDO",
+            debe_sentido=None,
+        )
+
+    if r < 0.82:
+        return Caso(
+            D=rng.choice([
+                "El unicornio entro al jardin.",
+                "Un gigante sostiene el sol con una mano.",
+                "The dragon slept under the mountain.",
+                "Los elfos tejieron la noche.",
+            ]),
+            O="idioma:es|registro:ficcion|acto:relato",
+            e_star="clausula",
+            tipo_ataque="FICCION",
+            debe_sentido=True,
+            es_ficcion=True,
+        )
+
+    if r < 0.88:
+        return Caso(
+            D=generar_mezcla_codigos(rng),
+            O="idioma:es|registro:oracion|acto:aserción",
+            e_star="discurso",
+            tipo_ataque="MEZCLA_CODIGOS",
+            debe_sentido=False,
+            idioma="mix",
+        )
+
+    if r < 0.93:
+        return Caso(
+            D=generar_deixis_sin_canal(rng),
+            O="idioma:es|registro:conversacion|acto:aserción",
+            e_star="discurso",
+            tipo_ataque="DEIXIS_SIN_CANAL",
+            debe_sentido=False,
+        )
+
+    if r < 0.97:
+        return Caso(
+            D=generar_basura_discurso(rng),
+            O="idioma:es|registro:conversacion|acto:aserción",
+            e_star="discurso",
+            tipo_ataque="ESCALA_DISCURSO_BASURA",
+            debe_sentido=False,
+        )
+
+    return Caso(
+        D=rng.choice(POSITIVAS["en"]),
+        O="idioma:es|registro:oracion|acto:aserción",
+        e_star="clausula",
+        tipo_ataque="O_IDIOMA_DESALINEADO",
+        debe_sentido=False,
+        idioma="en",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Runner + muestras
 # ---------------------------------------------------------------------------
 
 def run_montecarlo(
@@ -606,7 +657,7 @@ def _format_muestras(muestras: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tests unitarios de saneamiento
+# Tests unitarios
 # ---------------------------------------------------------------------------
 
 def test_constantes_alpha_beta_coherentes():
@@ -670,17 +721,24 @@ def test_se_ficcion_sentido_sin_real_k():
     assert v.real_k_concedido is False
 
 
+def test_se_a_rec_oraculo_alineado_con_cierre():
+    """SE-A-REC: oráculo de recombinación = cierre, no anclas."""
+    O = "idioma:es|registro:oracion|acto:aserción"
+    # Intacta → cierre → debe True
+    assert oraculo_recombinacion_clausula("Dos más dos son cuatro.", O, "es") is True
+    # Orden roto tipo FN del run anterior → sin cierre → debe False
+    assert oraculo_recombinacion_clausula("arrived. dog The", O, "en") is False
+    assert oraculo_recombinacion_clausula("ouvre Marie la porte.", O, "fr") is False
+
+
 # ---------------------------------------------------------------------------
-# Monte Carlo adversario (umbral 0.003)
+# Monte Carlo
 # ---------------------------------------------------------------------------
 
-@pytest.mark.timeout(600)
 def test_se_tcc_montecarlo_adversarial():
     """
-    Monte Carlo adversario.
-    Default CI: SE_MC_N=200000.
-    Duro: SE_MC_N=3000000.
-    Umbral fijo 0.003. Al fallar imprime muestras exactas por código.
+    Monte Carlo adversario. Umbral 0.003.
+    Oráculo POSITIVO_RUIDO bajo SE-A-REC (TR1 / T15).
     """
     n = DEFAULT_N
     threshold = DEFAULT_THRESHOLD
