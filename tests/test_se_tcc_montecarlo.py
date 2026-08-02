@@ -2,20 +2,17 @@
 """
 test_se_tcc_montecarlo.py
 =========================
-Monte Carlo adversario SE/TCC v0.2-test — ejecutable con pytest.
+Monte Carlo adversario SE/TCC v0.2-test — pytest.
+Umbral fijo 0.003. Al fallar muestra ejemplos exactos (D, O, e*, teorema, por qué).
 
-  pytest test_se_tcc_montecarlo.py -v
   pytest test_se_tcc_montecarlo.py -v -s
   SE_MC_N=3000000 pytest test_se_tcc_montecarlo.py -v -s
 
-Variables de entorno (opcionales):
-  SE_MC_N          iteraciones (default 200_000 en CI; usa 3000000 para run duro)
-  SE_MC_THRESHOLD  umbral de violación (default 0.003)
-  SE_MC_SEED       semilla (default 42)
-  SE_MC_SIGMA      ruido gaussiano (default 0.85)
-
-Sin dependencias externas salvo pytest (stdlib + pytest).
-Si el repo tiene formulas.constants o core.constants, usa ALPHA/BETA de ahí.
+Env:
+  SE_MC_N          default 200000
+  SE_MC_THRESHOLD  default 0.003
+  SE_MC_SEED       default 42
+  SE_MC_SIGMA      default 0.85
 """
 
 from __future__ import annotations
@@ -25,7 +22,7 @@ import random
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import pytest
 
@@ -54,6 +51,7 @@ DEFAULT_N = int(os.environ.get("SE_MC_N", "200000"))
 DEFAULT_THRESHOLD = float(os.environ.get("SE_MC_THRESHOLD", "0.003"))
 DEFAULT_SEED = int(os.environ.get("SE_MC_SEED", "42"))
 DEFAULT_SIGMA = float(os.environ.get("SE_MC_SIGMA", "0.85"))
+MAX_SAMPLES = 5
 
 
 # ---------------------------------------------------------------------------
@@ -130,9 +128,26 @@ TOKENS_EN = [
 ]
 CONECTORES = ["pero", "y", "entonces", "porque", "cuando", "however", "and", "then"]
 
+POR_QUE = {
+    "FP_BASURA": (
+        "SE-T1/T2/A2: sentido_o=1 sin cierre legítimo a e* "
+        "(match parcial o salto de escala; material/subcadena no bastan)"
+    ),
+    "FN_CIERRE": (
+        "SE-T1: oráculo exige sentido a cláusula bajo O y el evaluador negó cierre "
+        "(detector vs ruido / normalización)"
+    ),
+    "BYPASS_META": "SE-T6: meta en el texto no debe establecer sentido sin cierre",
+    "O_INVENTADO": "SE-A1: sentido pleno sin O explícito",
+    "REAL_REGALADO": "SE-T3/A6: Real/K concedido en ficción o sin reclamo",
+    "ESCALA_EXPORT": "SE-A7/T4: cierre local exportado como sentido de discurso",
+    "NORMA_EQ_R": "SE-A5: fallo de norma reportado como fallo de R",
+    "GUARD_INTEGRITY": "evaluador rompió invariante interna SE",
+}
+
 
 # ---------------------------------------------------------------------------
-# Ruido / generador
+# Ruido
 # ---------------------------------------------------------------------------
 
 def _n_edits(sigma: float, rng: random.Random) -> int:
@@ -338,7 +353,7 @@ def generar_caso(rng: random.Random, sigma: float) -> Caso:
 
 
 # ---------------------------------------------------------------------------
-# Evaluador SE
+# Evaluador SE v0.2
 # ---------------------------------------------------------------------------
 
 _META_PAT = re.compile(
@@ -400,9 +415,16 @@ def evaluar_se(caso: Caso) -> Veredicto:
 
     if not o_explicit:
         return Veredicto(
-            sentido_o=False, cierre=False, material_ok=material, comb_ok=False,
-            o_explicit=False, real_k_concedido=False, norma_como_R=False,
-            escala_exportada=False, o_inventado=False, notas=["O_indefinido"],
+            sentido_o=False,
+            cierre=False,
+            material_ok=material,
+            comb_ok=False,
+            o_explicit=False,
+            real_k_concedido=False,
+            norma_como_R=False,
+            escala_exportada=False,
+            o_inventado=False,
+            notas=["O_indefinido"],
         )
 
     clausula_ok = _parece_clausula_estable(D)
@@ -417,7 +439,8 @@ def evaluar_se(caso: Caso) -> Veredicto:
 
     if caso.e_star == "clausula":
         if clausula_ok and not perm and not o_des and not mezcla:
-            comb_ok, cierre = True, True
+            comb_ok = True
+            cierre = True
         else:
             if perm:
                 notas.append("comb_rota_permutacion")
@@ -435,14 +458,22 @@ def evaluar_se(caso: Caso) -> Veredicto:
         notas.append("meta_ignorada_sin_cierre")
 
     sentido = bool(o_explicit and cierre and material and comb_ok)
+
     if caso.es_ficcion or (caso.O and "ficcion" in caso.O.lower()):
         if sentido:
             notas.append("ficcion_sentido_sin_real")
 
     return Veredicto(
-        sentido_o=sentido, cierre=cierre, material_ok=material, comb_ok=comb_ok,
-        o_explicit=o_explicit, real_k_concedido=False, norma_como_R=False,
-        escala_exportada=False, o_inventado=False, notas=notas,
+        sentido_o=sentido,
+        cierre=cierre,
+        material_ok=material,
+        comb_ok=comb_ok,
+        o_explicit=o_explicit,
+        real_k_concedido=False,
+        norma_como_R=False,
+        escala_exportada=False,
+        o_inventado=False,
+        notas=notas,
     )
 
 
@@ -486,27 +517,59 @@ def assert_invariantes_se(caso: Caso, v: Veredicto) -> None:
         raise SEIntegrityError("Meta sin cierre (SE-T6)")
 
 
-def run_montecarlo(n: int, threshold: float, seed: int, sigma: float):
+# ---------------------------------------------------------------------------
+# Runner + muestras exactas
+# ---------------------------------------------------------------------------
+
+def run_montecarlo(
+    n: int,
+    threshold: float,
+    seed: int,
+    sigma: float,
+) -> Dict[str, Any]:
     rng = random.Random(seed)
     violaciones: Counter = Counter()
-    total_v = 0
     por_ataque: Counter = Counter()
+    muestras: Dict[str, List[dict]] = {}
+    total_v = 0
 
     for _ in range(n):
         caso = generar_caso(rng, sigma)
         ver = evaluar_se(caso)
+        guard_msg = None
         try:
             assert_invariantes_se(caso, ver)
-        except SEIntegrityError:
-            total_v += 1
-            violaciones["GUARD_INTEGRITY"] += 1
-            por_ataque[caso.tipo_ataque] += 1
+            tag = clasificar_violacion(caso, ver)
+        except SEIntegrityError as e:
+            tag = "GUARD_INTEGRITY"
+            guard_msg = str(e)
+
+        if not tag:
             continue
-        tag = clasificar_violacion(caso, ver)
-        if tag:
-            total_v += 1
-            violaciones[tag] += 1
-            por_ataque[caso.tipo_ataque] += 1
+
+        total_v += 1
+        violaciones[tag] += 1
+        por_ataque[caso.tipo_ataque] += 1
+
+        if len(muestras.get(tag, [])) < MAX_SAMPLES:
+            por_que = POR_QUE.get(tag, "violación SE")
+            if guard_msg:
+                por_que = f"GUARD: {guard_msg}"
+            muestras.setdefault(tag, []).append({
+                "codigo": tag,
+                "axioma_o_teorema": por_que.split(":")[0],
+                "por_que": por_que,
+                "D": (caso.D or "")[:200],
+                "O": caso.O,
+                "e_star": caso.e_star,
+                "tipo_ataque": caso.tipo_ataque,
+                "debe_sentido": caso.debe_sentido,
+                "sentido_o": ver.sentido_o,
+                "cierre": ver.cierre,
+                "comb_ok": ver.comb_ok,
+                "material_ok": ver.material_ok,
+                "notas": list(ver.notas),
+            })
 
     tasa = total_v / n if n else 0.0
     return {
@@ -516,14 +579,34 @@ def run_montecarlo(n: int, threshold: float, seed: int, sigma: float):
         "violaciones": total_v,
         "desglose": dict(violaciones),
         "por_ataque": dict(por_ataque),
+        "muestras": muestras,
         "pass": tasa <= threshold,
         "alpha": ALPHA,
         "beta": BETA,
     }
 
 
+def _format_muestras(muestras: dict) -> str:
+    if not muestras:
+        return "(sin muestras)"
+    lines = []
+    for codigo, items in sorted(muestras.items()):
+        lines.append(f"\n### {codigo} ({len(items)} muestras de {MAX_SAMPLES} máx.)")
+        for i, m in enumerate(items, 1):
+            lines.append(
+                f"  [{i}] eje: {m['axioma_o_teorema']}\n"
+                f"      por_que: {m['por_que']}\n"
+                f"      ataque: {m['tipo_ataque']} | e*={m['e_star']} | O={m['O']!r}\n"
+                f"      debe_sentido={m['debe_sentido']} | sentido_o={m['sentido_o']} | "
+                f"cierre={m['cierre']} | comb={m['comb_ok']} | mat={m['material_ok']}\n"
+                f"      D: {m['D']!r}\n"
+                f"      notas: {m['notas']}"
+            )
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
-# Tests pytest
+# Tests unitarios de saneamiento
 # ---------------------------------------------------------------------------
 
 def test_constantes_alpha_beta_coherentes():
@@ -587,31 +670,41 @@ def test_se_ficcion_sentido_sin_real_k():
     assert v.real_k_concedido is False
 
 
+# ---------------------------------------------------------------------------
+# Monte Carlo adversario (umbral 0.003)
+# ---------------------------------------------------------------------------
+
 @pytest.mark.timeout(600)
 def test_se_tcc_montecarlo_adversarial():
     """
-    Monte Carlo adversario completo.
-    Default CI: SE_MC_N=200000 (rápido).
-    Run duro: SE_MC_N=3000000 pytest ... -v -s
+    Monte Carlo adversario.
+    Default CI: SE_MC_N=200000.
+    Duro: SE_MC_N=3000000.
+    Umbral fijo 0.003. Al fallar imprime muestras exactas por código.
     """
     n = DEFAULT_N
     threshold = DEFAULT_THRESHOLD
-    seed = DEFAULT_SEED
-    sigma = DEFAULT_SIGMA
+    res = run_montecarlo(
+        n=n,
+        threshold=threshold,
+        seed=DEFAULT_SEED,
+        sigma=DEFAULT_SIGMA,
+    )
 
-    res = run_montecarlo(n=n, threshold=threshold, seed=seed, sigma=sigma)
-
-    # Informe legible en el log de CI / pytest -s
-    print("\n===== SE TCC Monte Carlo =====")
-    print(f"ALPHA={res['alpha']}  BETA={res['beta']}")
-    print(f"n={res['n']}  threshold={res['threshold']}")
-    print(f"violaciones={res['violaciones']}  tasa={res['tasa']:.8f}")
-    print(f"desglose={res['desglose']}")
-    print(f"por_ataque_top={sorted(res['por_ataque'].items(), key=lambda x: -x[1])[:8]}")
-    print(f"PASS={res['pass']}")
-    print("==============================\n")
+    reporte = (
+        f"\n===== SE TCC Monte Carlo =====\n"
+        f"ALPHA={res['alpha']} BETA={res['beta']}\n"
+        f"n={res['n']} threshold={res['threshold']}\n"
+        f"violaciones={res['violaciones']} tasa={res['tasa']:.8f} PASS={res['pass']}\n"
+        f"desglose={res['desglose']}\n"
+        f"por_ataque={sorted(res['por_ataque'].items(), key=lambda x: -x[1])[:12]}\n"
+        f"{_format_muestras(res['muestras'])}\n"
+        f"==============================\n"
+    )
+    print(reporte)
 
     assert res["pass"], (
-        f"SE Monte Carlo FAIL: tasa={res['tasa']:.8f} > {threshold}. "
-        f"desglose={res['desglose']}"
+        f"SE Monte Carlo FAIL: tasa={res['tasa']:.8f} > {threshold}\n"
+        f"desglose={res['desglose']}\n"
+        f"{_format_muestras(res['muestras'])}"
     )
